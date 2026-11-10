@@ -12,6 +12,7 @@
 
 #ifndef BLOCK_SIZE
 #define BLOCK_SIZE 1024
+#define MAX_N ((2 * BLOCK_SIZE) * (2 * BLOCK_SIZE))
 #endif
 
 __global__ void simpleKuggeStoneScan(int *input, int *output) {
@@ -171,9 +172,13 @@ struct CudaTimedEvents {
     milliseconds += appendMilliseconds;
   }
   float time() { return milliseconds; }
-  void printTime() {
+  void printExecTime() {
     float milliseconds = time();
     printf("GPU time taken %f milliseconds\n", milliseconds);
+  }
+  void printMemTime() {
+    float milliseconds = time();
+    printf("GPU Memory time taken %f milliseconds\n", milliseconds);
   }
 };
 struct HostTimedEvents {
@@ -188,34 +193,82 @@ struct HostTimedEvents {
   }
 };
 
-__global__ void vecAddNum(int *input_d, int *output, int N) {
+__global__ void addNumberToSection(int *input_d, int *prevNum, int N) {
+  // We want to start at index 1
+  int inputIdx = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (inputIdx < N) {
+    input_d[inputIdx] += prevNum[0];
+  }
+}
+__global__ void vecAddNum(int *input_d, int *output_d, int *currentLastNum,
+                          int N) {
   // We want to start at index 1
   int start = BLOCK_SIZE * 2;
   int inputIdx = (blockIdx.x * BLOCK_SIZE * 2) + start + threadIdx.x;
 
   if (inputIdx < N) {
-    input_d[inputIdx] += output[blockIdx.x];
+    input_d[inputIdx] += output_d[blockIdx.x];
+  }
+  if (inputIdx + blockDim.x < N) {
+    input_d[inputIdx + blockDim.x] += output_d[blockIdx.x];
+  }
+
+  if (inputIdx + blockDim.x == N - 1) {
+    currentLastNum[0] = input_d[inputIdx + blockDim.x];
+  }
+  if (inputIdx == N - 1) {
+    currentLastNum[0] = input_d[inputIdx];
   }
 }
 void printAndTimeGPU(int *input_d, int *output_d, int gridSize, int N) {
-  int *gridOutput = allocateAndReturnIntCudaMem(gridSize);
   CudaTimedEvents cudaTimedEvent;
-  // Start Timing on execution
-  cudaTimedEvent.startTimer();
-  BrentKungScan<<<gridSize, BLOCK_SIZE>>>(input_d, output_d, N);
-  cudaDeviceSynchronize();
 
-  int outputGridSize = static_cast<double>(gridSize) / (2 * BLOCK_SIZE);
+  // int gridSize = std::ceil(static_cast<double>(N) / (2 * BLOCK_SIZE));
+  // what is the max block
+  // (BLOCK SIZE * 2) * (BLOCK_SIZE * 2) = MAX_N?
+  int num_of_sections = std::ceil(static_cast<double>(N) / MAX_N);
+  int i = 0;
+  int *gridOutput = allocateAndReturnIntCudaMem(1);
+  int *prevLastOutput = allocateAndReturnIntCudaMem(1);
+  int defaultVal = 0;
+  cudaMemcpy((void **)prevLastOutput, &defaultVal, sizeof(int),
+             cudaMemcpyHostToDevice);
 
-  if (gridSize > 1) {
-    BrentKungScan<<<outputGridSize, BLOCK_SIZE>>>(output_d, gridOutput,
-                                                  gridSize);
+  while (i < num_of_sections) {
+    int curNum = MAX_N;
+    int curGridSize = 2 * BLOCK_SIZE;
+    if (i + 1 == num_of_sections) {
+      curNum = N % MAX_N;
+      curGridSize = std::ceil(static_cast<double>(curNum) / (2 * BLOCK_SIZE));
+    }
+    int curOffset = i * MAX_N;
+    cudaDeviceSynchronize();
+    // int curGridSize =
+    //     std::ceil(static_cast<double>(gridSize) / (BLOCK_SIZE * 2));
+    //  Start Timing on execution
 
-    vecAddNum<<<gridSize - 1, BLOCK_SIZE>>>(input_d, gridOutput, N);
+    cudaTimedEvent.startTimer();
+    BrentKungScan<<<curGridSize, BLOCK_SIZE>>>(input_d + curOffset, output_d,
+                                               curNum);
+    cudaDeviceSynchronize();
+    cudaTimedEvent.stopTimer();
+    // Failed attempt at getting 4096 * 4096
+    if (curGridSize != 1) {
+
+      cudaTimedEvent.startTimer();
+      BrentKungScan<<<1, BLOCK_SIZE>>>(output_d, gridOutput, curGridSize);
+      cudaDeviceSynchronize();
+      cudaTimedEvent.stopTimer();
+
+      cudaTimedEvent.startTimer();
+      vecAddNum<<<curGridSize - 1, BLOCK_SIZE>>>(input_d + curOffset, output_d,
+                                                 prevLastOutput, curNum);
+      cudaDeviceSynchronize();
+      cudaTimedEvent.stopTimer();
+    }
+    i++;
   }
-
-  cudaTimedEvent.stopTimer();
-  cudaTimedEvent.printTime();
+  cudaTimedEvent.printExecTime();
 }
 void printAndTimeCPU(int *input, int *output, int N) {
   HostTimedEvents cpuTimedEvent;
@@ -232,16 +285,31 @@ int main() {
 
   int *input = createInitializedList(N);
   int *output = (int *)malloc(sizeof(int) * N);
+  printf("Current Input\n");
   print20Elements(input, N);
+
+  CudaTimedEvents cudaTimedEvent;
+  cudaTimedEvent.startTimer();
   int *input_d = allocateAndReturnIntCudaMem(N);
   int *output_d = allocateAndReturnIntCudaMem(gridSize);
   cudaMemcpy(input_d, input, sizeof(int) * N, cudaMemcpyHostToDevice);
+  cudaTimedEvent.stopTimer();
 
   printAndTimeGPU(input_d, output_d, gridSize, N);
 
   printAndTimeCPU(input, output, N);
 
+  cudaTimedEvent.startTimer();
   cudaMemcpy(cuda_output, input_d, sizeof(int) * N, cudaMemcpyDeviceToHost);
+  cudaTimedEvent.stopTimer();
+
+  cudaTimedEvent.printMemTime();
+
+  printf("CPU Output\n");
+  print20Elements(output, N);
+
+  printf("GPU Output\n");
+  print20Elements(output, N);
 
   verify(output, cuda_output, N);
 
