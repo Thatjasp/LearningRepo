@@ -158,7 +158,7 @@ int main() {
   clock_t diff;
   MatrixMulOnHost(a, b, c, matrixWidth);
   diff = clock() - start;
-  int msec = diff * 1000 / CLOCKS_PER_SEC;
+  float msec = static_cast<float>(diff) * 1000 / CLOCKS_PER_SEC;
   printf("CPU time taken %d milliseconds\n", msec);
 
   if (matrixHeight <= 8) {
