@@ -247,6 +247,8 @@ void printAndTimeGPU(int *input_d, int *output_d, int gridSize, int N) {
     //     std::ceil(static_cast<double>(gridSize) / (BLOCK_SIZE * 2));
     //  Start Timing on execution
 
+    printf("THREAD_BLOCK %d\n", BLOCK_SIZE);
+    printf("CUR GRID SIZE %d\n", curGridSize);
     cudaTimedEvent.startTimer();
     BrentKungScan<<<curGridSize, BLOCK_SIZE>>>(input_d + curOffset, output_d,
                                                curNum);

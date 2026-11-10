@@ -175,6 +175,8 @@ void printAndTimeGPU(int **input_d, int **output_d, int gridSize, int N) {
   int *curOutput = *output_d;
   // Start Timing on execution
   cudaTimedEvent.startTimer();
+  printf("THREAD_BLOCK_SIZE: %d\n", THREAD_BLOCK_SIZE);
+  printf("Initial Grid Size: %d\n", gridSize);
   reduceMemCoalescedAndSharedMem<<<gridSize, THREAD_BLOCK_SIZE>>>(curInput,
                                                                   curOutput, N);
   cudaDeviceSynchronize();
@@ -218,6 +220,9 @@ int main() {
 
   int cuda_output;
   int *input = createInitializedList(N);
+  printf("Current Input\n");
+  print20Elements(input, N);
+
   int *input_d = allocateAndReturnIntCudaMem(N);
   int *output_d = allocateAndReturnIntCudaMem(gridSize);
 
