@@ -174,9 +174,9 @@ void printAndTimeGPU(int **input_d, int **output_d, int gridSize, int N) {
   int *curInput = *input_d;
   int *curOutput = *output_d;
   // Start Timing on execution
-  cudaTimedEvent.startTimer();
   printf("THREAD_BLOCK_SIZE: %d\n", THREAD_BLOCK_SIZE);
   printf("Initial Grid Size: %d\n", gridSize);
+  cudaTimedEvent.startTimer();
   reduceMemCoalescedAndSharedMem<<<gridSize, THREAD_BLOCK_SIZE>>>(curInput,
                                                                   curOutput, N);
   cudaDeviceSynchronize();
@@ -185,7 +185,6 @@ void printAndTimeGPU(int **input_d, int **output_d, int gridSize, int N) {
   int curN = gridSize;
   int outputGridSize = gridSize;
 
-  // TODO: Implement a loop for a bigger loops size
   while (outputGridSize > 1) {
     int *temp = curInput;
     curInput = curOutput;
@@ -218,7 +217,7 @@ int main() {
   int N = promptListSize();
   int gridSize = std::ceil(static_cast<double>(N) / (2 * THREAD_BLOCK_SIZE));
 
-  int cuda_output;
+  int *cuda_output = (int *)malloc(sizeof(int) * gridSize);
   int *input = createInitializedList(N);
   printf("Current Input\n");
   print20Elements(input, N);
@@ -227,12 +226,21 @@ int main() {
   int *output_d = allocateAndReturnIntCudaMem(gridSize);
 
   cudaMemcpy(input_d, input, sizeof(int) * N, cudaMemcpyHostToDevice);
-  printAndTimeGPU(&input_d, &output_d, gridSize, N);
 
-  cudaMemcpy(&cuda_output, output_d, sizeof(int), cudaMemcpyDeviceToHost);
+  printAndTimeGPU(&input_d, &output_d, gridSize, N);
+  cudaMemcpy(cuda_output, output_d, sizeof(int) * gridSize,
+             cudaMemcpyDeviceToHost);
+
   int reductionResult = printAndTimeCPU(input, N);
-  verify(&reductionResult, &cuda_output, 1);
-  printf("CPU Output: %d, GPU Output: %d\n", reductionResult, cuda_output);
+
+  printf("GPU Output\n");
+  print20Elements(cuda_output, gridSize);
+
+  printf("CPU Output\n");
+  print20Elements(input, N);
+
+  verify(&reductionResult, cuda_output, 1);
+  printf("CPU Output: %d, GPU Output: %d\n", reductionResult, cuda_output[0]);
 
   cudaFree(input_d);
   cudaFree(output_d);

@@ -57,9 +57,16 @@ __global__ void BrentKungScan(int *input, int *output, unsigned int N) {
 
   int start = 2 * (blockDim.x * blockIdx.x);
   int tx = threadIdx.x;
-
-  sharedInput[tx] = input[tx + start];
-  sharedInput[tx + blockDim.x] = input[start + tx + blockDim.x];
+  if (tx + start < N) {
+    sharedInput[tx] = input[tx + start];
+  } else {
+    sharedInput[tx] = 0;
+  }
+  if (tx + start + blockDim.x < N) {
+    sharedInput[tx + blockDim.x] = input[start + tx + blockDim.x];
+  } else {
+    sharedInput[tx + blockDim.x] = 0;
+  }
 
   __syncthreads();
 
@@ -80,8 +87,14 @@ __global__ void BrentKungScan(int *input, int *output, unsigned int N) {
     __syncthreads();
   }
   __syncthreads();
-  input[start + tx] = sharedInput[tx];
-  input[start + tx + blockDim.x] = sharedInput[tx + blockDim.x];
+
+  if (tx + start < N) {
+    input[start + tx] = sharedInput[tx];
+  }
+  if (tx + start + blockDim.x < N) {
+    input[start + tx + blockDim.x] = sharedInput[tx + blockDim.x];
+  }
+  __syncthreads();
   if (tx == BLOCK_SIZE - 1) {
     output[blockIdx.x] = sharedInput[2 * BLOCK_SIZE - 1];
   }
@@ -199,12 +212,14 @@ __global__ void addNumberToSection(int *input_d, int *prevNum, int N) {
   if (inputIdx < N) {
     input_d[inputIdx] += prevNum[0];
   }
+  if (inputIdx + blockDim.x < N) {
+    input_d[inputIdx + blockDim.x] += prevNum[0];
+  }
 }
-__global__ void vecAddNum(int *input_d, int *output_d, int *currentLastNum,
-                          int N) {
+__global__ void addScanBlock(int *input_d, int *output_d, int N) {
   // We want to start at index 1
   int start = BLOCK_SIZE * 2;
-  int inputIdx = (blockIdx.x * BLOCK_SIZE * 2) + start + threadIdx.x;
+  int inputIdx = (blockIdx.x * (blockDim.x * 2)) + start + threadIdx.x;
 
   if (inputIdx < N) {
     input_d[inputIdx] += output_d[blockIdx.x];
@@ -212,12 +227,14 @@ __global__ void vecAddNum(int *input_d, int *output_d, int *currentLastNum,
   if (inputIdx + blockDim.x < N) {
     input_d[inputIdx + blockDim.x] += output_d[blockIdx.x];
   }
-
-  if (inputIdx + blockDim.x == N - 1) {
-    currentLastNum[0] = input_d[inputIdx + blockDim.x];
+}
+__global__ void addNumToInputBlock(int *input_d, int *num_d, int N) {
+  int index = (2 * blockIdx.x * blockDim.x) + threadIdx.x;
+  if (index < N) {
+    input_d[index] += num_d[0];
   }
-  if (inputIdx == N - 1) {
-    currentLastNum[0] = input_d[inputIdx];
+  if (index + blockDim.x < N) {
+    input_d[index + blockDim.x] += num_d[0];
   }
 }
 void printAndTimeGPU(int *input_d, int *output_d, int gridSize, int N) {
@@ -234,27 +251,24 @@ void printAndTimeGPU(int *input_d, int *output_d, int gridSize, int N) {
   cudaMemcpy((void **)prevLastOutput, &defaultVal, sizeof(int),
              cudaMemcpyHostToDevice);
 
+  printf("THREAD_BLOCK %d\n", BLOCK_SIZE);
+
   while (i < num_of_sections) {
     int curNum = MAX_N;
     int curGridSize = 2 * BLOCK_SIZE;
-    if (i + 1 == num_of_sections) {
+    if (i + 1 == num_of_sections && N % MAX_N != 0) {
       curNum = N % MAX_N;
       curGridSize = std::ceil(static_cast<double>(curNum) / (2 * BLOCK_SIZE));
     }
     int curOffset = i * MAX_N;
-    cudaDeviceSynchronize();
-    // int curGridSize =
-    //     std::ceil(static_cast<double>(gridSize) / (BLOCK_SIZE * 2));
-    //  Start Timing on execution
 
-    printf("THREAD_BLOCK %d\n", BLOCK_SIZE);
-    printf("CUR GRID SIZE %d\n", curGridSize);
+    printf("Grid Size for section %d:  %d\n", i, curGridSize);
     cudaTimedEvent.startTimer();
     BrentKungScan<<<curGridSize, BLOCK_SIZE>>>(input_d + curOffset, output_d,
                                                curNum);
     cudaDeviceSynchronize();
     cudaTimedEvent.stopTimer();
-    // Failed attempt at getting 4096 * 4096
+
     if (curGridSize != 1) {
 
       cudaTimedEvent.startTimer();
@@ -263,9 +277,14 @@ void printAndTimeGPU(int *input_d, int *output_d, int gridSize, int N) {
       cudaTimedEvent.stopTimer();
 
       cudaTimedEvent.startTimer();
-      vecAddNum<<<curGridSize - 1, BLOCK_SIZE>>>(input_d + curOffset, output_d,
-                                                 prevLastOutput, curNum);
+      addScanBlock<<<curGridSize - 1, BLOCK_SIZE>>>(input_d + curOffset,
+                                                    output_d, curNum);
       cudaDeviceSynchronize();
+      if (i > 0) {
+        addNumToInputBlock<<<curGridSize, BLOCK_SIZE>>>(
+            input_d + curOffset, input_d + curOffset - 1, curNum);
+        cudaDeviceSynchronize();
+      }
       cudaTimedEvent.stopTimer();
     }
     i++;
