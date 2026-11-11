@@ -6,7 +6,7 @@
 - Date: 11/9/2026
 - Project Name: Project 3 Scan Reduce
 
-## Matrix Add Program
+## Reduce Program
 - To compile  ```nvcc reduce.cu -o reduce```
 - To start program ```./reduce```
 - This will prompt a inputs from the user
@@ -24,7 +24,7 @@ Input length: <num>
 ```
 
 
-## Matrix Multiply Program
+## Scan Program
 - To compile```nvcc scan.cu -o scan```
 - To start program ```./scan```
 - This will prompt an input from the user
