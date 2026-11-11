@@ -310,14 +310,14 @@ int main() {
   print20Elements(input, N);
 
   CudaTimedEvents cudaTimedEvent;
-  cudaTimedEvent.startTimer();
   int *input_d = allocateAndReturnIntCudaMem(N);
   int *output_d = allocateAndReturnIntCudaMem(gridSize);
+
+  cudaTimedEvent.startTimer();
   cudaMemcpy(input_d, input, sizeof(int) * N, cudaMemcpyHostToDevice);
   cudaTimedEvent.stopTimer();
 
   printAndTimeGPU(input_d, output_d, gridSize, N);
-
   printAndTimeCPU(input, output, N);
 
   cudaTimedEvent.startTimer();
